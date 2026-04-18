@@ -1,0 +1,12 @@
+{
+  "name": "apr18",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler pages dev public",
+    "deploy": "wrangler pages deploy public --project-name=apr18"
+  },
+  "devDependencies": {
+    "wrangler": "^4"
+  }
+}

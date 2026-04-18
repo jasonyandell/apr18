@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>apr18 — A Silly Little Celebration of April 18th</title>
+<style>
+  :root {
+    --bg: #0b0420;
+    --ink: #fff7d6;
+    --hot: #ff4fa3;
+    --cool: #49e0ff;
+    --lime: #c6ff5e;
+    --gold: #ffd84a;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: 'Courier New', ui-monospace, monospace;
+    background: var(--bg);
+    color: var(--ink);
+    min-height: 100vh;
+    overflow-x: hidden;
+    position: relative;
+  }
+  /* Confetti canvas overlay */
+  #confetti {
+    position: fixed; inset: 0;
+    pointer-events: none;
+    z-index: 1;
+  }
+  .wrap {
+    position: relative;
+    z-index: 2;
+    max-width: 980px;
+    margin: 0 auto;
+    padding: 72px 24px 120px;
+    text-align: center;
+  }
+  .kicker {
+    display: inline-block;
+    padding: 6px 14px;
+    border: 2px dashed var(--gold);
+    border-radius: 999px;
+    color: var(--gold);
+    font-size: 14px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    transform: rotate(-2deg);
+    animation: wobble 3s ease-in-out infinite;
+  }
+  @keyframes wobble {
+    0%,100% { transform: rotate(-2deg) translateY(0); }
+    50% { transform: rotate(2deg) translateY(-4px); }
+  }
+  h1 {
+    font-size: clamp(44px, 9vw, 110px);
+    line-height: 0.95;
+    margin: 20px 0 8px;
+    background: linear-gradient(90deg, var(--hot), var(--gold), var(--cool), var(--lime), var(--hot));
+    background-size: 300% 100%;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    animation: slide 6s linear infinite;
+    text-shadow: 0 0 40px rgba(255,255,255,0.08);
+  }
+  @keyframes slide {
+    0% { background-position: 0% 50%; }
+    100% { background-position: 300% 50%; }
+  }
+  .date {
+    font-size: clamp(18px, 2.2vw, 24px);
+    opacity: 0.85;
+    margin-bottom: 12px;
+  }
+  .tagline {
+    font-size: clamp(20px, 2.6vw, 30px);
+    font-style: italic;
+    margin: 18px auto 0;
+    max-width: 640px;
+    opacity: 0.95;
+  }
+  .tagline b { color: var(--lime); font-style: normal; }
+  .payoff {
+    margin: 28px auto 56px;
+    max-width: 520px;
+    padding: 18px 22px;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 12px;
+    font-size: 15px;
+    text-align: left;
+    line-height: 1.55;
+  }
+  .payoff pre {
+    margin: 10px 0 0;
+    font-family: inherit;
+    color: var(--cool);
+    white-space: pre-wrap;
+  }
+  .payoff em { color: var(--gold); font-style: normal; }
+  h2.pages-heading {
+    font-size: 22px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    opacity: 0.7;
+    margin: 48px 0 20px;
+  }
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 20px;
+    text-align: left;
+  }
+  .card {
+    position: relative;
+    display: block;
+    padding: 24px;
+    background: linear-gradient(145deg, rgba(255,79,163,0.08), rgba(73,224,255,0.08));
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 14px;
+    color: var(--ink);
+    text-decoration: none;
+    transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+    overflow: hidden;
+  }
+  .card::before {
+    content: "";
+    position: absolute; inset: 0;
+    background: radial-gradient(circle at 80% 0%, rgba(255,216,74,0.22), transparent 50%);
+    opacity: 0;
+    transition: opacity 0.25s ease;
+  }
+  .card:hover {
+    transform: translateY(-4px) rotate(-0.5deg);
+    border-color: var(--gold);
+    box-shadow: 0 12px 30px rgba(0,0,0,0.4);
+  }
+  .card:hover::before { opacity: 1; }
+  .card .num {
+    font-size: 12px;
+    letter-spacing: 0.3em;
+    color: var(--gold);
+    opacity: 0.8;
+  }
+  .card h3 {
+    margin: 6px 0 8px;
+    font-size: 22px;
+    color: var(--hot);
+  }
+  .card p { margin: 0; opacity: 0.85; line-height: 1.5; font-size: 14px; }
+  .card .arrow {
+    position: absolute;
+    bottom: 14px; right: 18px;
+    color: var(--cool);
+    font-size: 20px;
+  }
+  .card.soon {
+    opacity: 0.6;
+    cursor: not-allowed;
+    border-style: dashed;
+  }
+  .card.soon h3 { color: var(--ink); }
+  footer {
+    margin-top: 80px;
+    font-size: 12px;
+    opacity: 0.55;
+    letter-spacing: 0.1em;
+  }
+  .equilibrium {
+    display: inline-block;
+    padding: 2px 8px;
+    border: 1px solid var(--cool);
+    border-radius: 6px;
+    color: var(--cool);
+    font-size: 12px;
+    letter-spacing: 0.15em;
+    margin-left: 6px;
+    vertical-align: middle;
+  }
+</style>
+</head>
+<body>
+<canvas id="confetti"></canvas>
+<main class="wrap">
+  <span class="kicker">★ apr 18 ★ est. today ★</span>
+  <h1>Happy April&nbsp;18<span style="font-size:0.45em">th</span>!</h1>
+  <div class="date">it's a Saturday &middot; the sun is out &middot; the payoffs are non-zero</div>
+  <p class="tagline">Today we are <b>having fun at game theory</b>. Cooperate, defect, do whatever you want — there is no dominant strategy for having a good time.</p>
+
+  <div class="payoff">
+    <strong>Apr 18th Payoff Matrix</strong>
+    <pre>                 Click         Do nothing
+Visit apr18   (+∞, +∞)      (+0, -boring)
+Stay away     (-fomo, +0)   (0, 0)</pre>
+    <em>Nash equilibrium: click things. Obviously.</em>
+  </div>
+
+  <h2 class="pages-heading">— the pages so far —</h2>
+  <div class="cards">
+    <a class="card" href="/mandelbrot">
+      <div class="num">PAGE A</div>
+      <h3>Mandelbrot, zooming</h3>
+      <p>A WebGPU-rendered fractal. Click anywhere and it dives in, then pops back out. Repeat forever. <span class="equilibrium">N.E.</span></p>
+      <div class="arrow">→</div>
+    </a>
+    <div class="card soon">
+      <div class="num">PAGE B</div>
+      <h3>coming soon™</h3>
+      <p>More silliness en route. This is just the ice-breaker.</p>
+      <div class="arrow">…</div>
+    </div>
+  </div>
+
+  <footer>built on apr 18 · deployed on cloudflare · do not defect</footer>
+</main>
+
+<script>
+// Confetti — gentle falling game-theory symbols
+(() => {
+  const c = document.getElementById('confetti');
+  const ctx = c.getContext('2d');
+  const glyphs = ['∑','∞','π','α','β','γ','≠','⇄','★','◆','●','▲','♥','♦'];
+  const colors = ['#ff4fa3','#49e0ff','#c6ff5e','#ffd84a','#fff7d6'];
+  let w, h, parts;
+
+  function resize() {
+    w = c.width = window.innerWidth * devicePixelRatio;
+    h = c.height = window.innerHeight * devicePixelRatio;
+    c.style.width = window.innerWidth + 'px';
+    c.style.height = window.innerHeight + 'px';
+  }
+  function spawn(n) {
+    parts = [];
+    for (let i = 0; i < n; i++) {
+      parts.push({
+        x: Math.random() * w,
+        y: Math.random() * h - h,
+        vy: (0.4 + Math.random() * 0.8) * devicePixelRatio,
+        vx: (Math.random() - 0.5) * 0.3 * devicePixelRatio,
+        g: glyphs[(Math.random() * glyphs.length) | 0],
+        col: colors[(Math.random() * colors.length) | 0],
+        size: (14 + Math.random() * 18) * devicePixelRatio,
+        rot: Math.random() * Math.PI * 2,
+        vr: (Math.random() - 0.5) * 0.02,
+        a: 0.25 + Math.random() * 0.5
+      });
+    }
+  }
+  function frame() {
+    ctx.clearRect(0, 0, w, h);
+    for (const p of parts) {
+      p.x += p.vx; p.y += p.vy; p.rot += p.vr;
+      if (p.y > h + 40) { p.y = -40; p.x = Math.random() * w; }
+      ctx.save();
+      ctx.globalAlpha = p.a;
+      ctx.translate(p.x, p.y);
+      ctx.rotate(p.rot);
+      ctx.fillStyle = p.col;
+      ctx.font = `bold ${p.size}px 'Courier New', monospace`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(p.g, 0, 0);
+      ctx.restore();
+    }
+    requestAnimationFrame(frame);
+  }
+  window.addEventListener('resize', () => { resize(); spawn(80); });
+  resize(); spawn(80); frame();
+})();
+</script>
+</body>
+</html>
