@@ -6,7 +6,7 @@
 <title>apr18 — Mandelbrot, zooming</title>
 <style>
   html, body { margin: 0; padding: 0; background: #000; color: #fff7d6; font-family: 'Courier New', monospace; overflow: hidden; height: 100%; }
-  canvas { display: block; width: 100vw; height: 100vh; cursor: crosshair; }
+  canvas { display: block; width: 100vw; height: 100vh; cursor: crosshair; background: #0b0420; }
   .hud {
     position: fixed; top: 14px; left: 14px;
     background: rgba(0,0,0,0.55);
@@ -19,6 +19,7 @@
     user-select: none;
   }
   .hud b { color: #ffd84a; }
+  .hud .engine { color: #49e0ff; }
   .back {
     position: fixed; top: 14px; right: 14px;
     background: rgba(0,0,0,0.55);
@@ -38,68 +39,141 @@
     font-size: 16px; line-height: 1.6;
     background: #0b0420;
   }
-  .err code { background: rgba(255,255,255,0.1); padding: 2px 6px; border-radius: 4px; }
 </style>
 </head>
 <body>
-<canvas id="gpu"></canvas>
-<div class="hud">zoom <b id="zoom">1.0×</b> &nbsp;·&nbsp; click anywhere to dive</div>
+<canvas id="gfx"></canvas>
+<div class="hud">zoom <b id="zoom">1.0×</b> &nbsp;·&nbsp; click anywhere to dive &nbsp;·&nbsp; <span class="engine" id="engine">…</span></div>
 <a class="back" href="/">← home</a>
 <script type="module">
-const canvas = document.getElementById('gpu');
+let canvas = document.getElementById('gfx');
 const zoomLabel = document.getElementById('zoom');
+const engineLabel = document.getElementById('engine');
 
-async function fail(msg) {
-  document.body.innerHTML = `<div class="err">🙃 ${msg}<br/><br/>Try Chrome/Edge on desktop, or enable WebGPU via <code>chrome://flags</code>.</div>`;
+function fail(msg) {
+  document.body.innerHTML = `<div class="err">🙃 ${msg}</div>`;
+  throw new Error(msg);
 }
 
-if (!navigator.gpu) {
-  fail("Your browser doesn't have WebGPU, which is how this page is drawn.");
-  throw new Error("no webgpu");
+// Once a canvas has a rendering context, it can't switch. If WebGPU
+// grabs the context and later init fails, we need a fresh canvas for
+// the WebGL2 fallback.
+function resetCanvas() {
+  const fresh = document.createElement('canvas');
+  fresh.id = canvas.id;
+  canvas.parentNode.replaceChild(fresh, canvas);
+  canvas = fresh;
+  canvas.addEventListener('click', onCanvasClick);
+  sizeCanvas();
 }
 
-const adapter = await navigator.gpu.requestAdapter();
-if (!adapter) { fail("No suitable GPU adapter found."); throw new Error("no adapter"); }
-const device = await adapter.requestDevice();
-const context = canvas.getContext('webgpu');
-const format = navigator.gpu.getPreferredCanvasFormat();
-context.configure({ device, format, alphaMode: 'opaque' });
+// ---------- Shared view / animation state ----------
+const HOME = { cx: -0.5, cy: 0.0, scale: 1.5 };
+let view = { cx: HOME.cx, cy: HOME.cy, scale: HOME.scale };
+let anim = null;
 
-const shader = /* wgsl */`
-struct View {
-  centerX: f32,
-  centerY: f32,
-  scale:   f32,
-  aspect:  f32,
-  maxIter: f32,
-  time:    f32,
-  _pad0:   f32,
-  _pad1:   f32,
-};
-@group(0) @binding(0) var<uniform> view : View;
+function easeInOutCubic(t) { return t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t + 2, 3) / 2; }
 
-struct VSOut {
-  @builtin(position) pos : vec4<f32>,
-  @location(0) uv : vec2<f32>,
+function screenToComplex(clientX, clientY) {
+  const rect = canvas.getBoundingClientRect();
+  const u = ((clientX - rect.left) / rect.width) * 2 - 1;
+  const v = 1 - ((clientY - rect.top) / rect.height) * 2;
+  const aspect = canvas.width / canvas.height;
+  return { x: view.cx + u * aspect * view.scale, y: view.cy + v * view.scale };
+}
+
+function onCanvasClick(e) {
+  if (anim) return;
+  const t = screenToComplex(e.clientX, e.clientY);
+  anim = {
+    phase: 'in', t0: performance.now(), duration: 2200,
+    startCx: view.cx, startCy: view.cy, startScale: view.scale,
+    targetCx: t.x, targetCy: t.y, targetScale: 0.0006,
+  };
+}
+canvas.addEventListener('click', onCanvasClick);
+
+function stepAnim(now) {
+  if (!anim) return;
+  const t = Math.min(1, (now - anim.t0) / anim.duration);
+  const e = easeInOutCubic(t);
+  if (anim.phase === 'in' || anim.phase === 'out') {
+    view.cx = anim.startCx + (anim.targetCx - anim.startCx) * e;
+    view.cy = anim.startCy + (anim.targetCy - anim.startCy) * e;
+    const lS = Math.log(anim.startScale), lE = Math.log(anim.targetScale);
+    view.scale = Math.exp(lS + (lE - lS) * e);
+  }
+  if (t >= 1) {
+    if (anim.phase === 'in') {
+      anim = { phase: 'hold', t0: now, duration: 600,
+        startCx: view.cx, startCy: view.cy, startScale: view.scale,
+        targetCx: view.cx, targetCy: view.cy, targetScale: view.scale };
+    } else if (anim.phase === 'hold') {
+      anim = { phase: 'out', t0: now, duration: 1800,
+        startCx: view.cx, startCy: view.cy, startScale: view.scale,
+        targetCx: HOME.cx, targetCy: HOME.cy, targetScale: HOME.scale };
+    } else {
+      view = { cx: HOME.cx, cy: HOME.cy, scale: HOME.scale };
+      anim = null;
+    }
+  }
+}
+
+// ---------- Canvas size ----------
+function sizeCanvas() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const w = Math.max(2, Math.floor((window.innerWidth || document.documentElement.clientWidth) * dpr));
+  const h = Math.max(2, Math.floor((window.innerHeight || document.documentElement.clientHeight) * dpr));
+  if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; return true; }
+  return false;
+}
+window.addEventListener('resize', sizeCanvas);
+sizeCanvas();
+
+// ---------- WebGPU renderer ----------
+async function createWebGPURenderer(onGrabbedContext) {
+  if (!navigator.gpu) return null;
+  let adapter;
+  try { adapter = await navigator.gpu.requestAdapter(); } catch { return null; }
+  if (!adapter) return null;
+  let device;
+  try { device = await adapter.requestDevice(); } catch { return null; }
+  if (!device) return null;
+  device.addEventListener('uncapturederror', (e) => console.error('WebGPU uncaptured:', e.error?.message || e));
+  const context = canvas.getContext('webgpu');
+  if (!context) return null;
+  if (onGrabbedContext) onGrabbedContext();
+  const format = navigator.gpu.getPreferredCanvasFormat();
+  try { context.configure({ device, format, alphaMode: 'opaque' }); } catch (e) { console.warn('configure failed:', e); return null; }
+
+  const code = /* wgsl */`
+struct Params {
+  center  : vec2<f32>,
+  scale   : f32,
+  aspect  : f32,
+  maxIter : f32,
+  time    : f32,
+  _pad    : vec2<f32>,
 };
+@group(0) @binding(0) var<uniform> P : Params;
+
+struct VO { @builtin(position) pos : vec4<f32>, @location(0) uv : vec2<f32> };
 
 @vertex
-fn vs(@builtin(vertex_index) i : u32) -> VSOut {
-  // Fullscreen triangle
-  var p = array<vec2<f32>, 3>(
+fn vs(@builtin(vertex_index) i : u32) -> VO {
+  var pts = array<vec2<f32>, 3>(
     vec2<f32>(-1.0, -1.0),
     vec2<f32>( 3.0, -1.0),
     vec2<f32>(-1.0,  3.0),
   );
-  var out : VSOut;
-  let xy = p[i];
-  out.pos = vec4<f32>(xy, 0.0, 1.0);
-  out.uv = xy; // -1..1 range roughly
-  return out;
+  let p = pts[i];
+  var o : VO;
+  o.pos = vec4<f32>(p, 0.0, 1.0);
+  o.uv  = p;
+  return o;
 }
 
 fn palette(t : f32) -> vec3<f32> {
-  // Smooth cosine palette, warm to cool
   let a = vec3<f32>(0.5, 0.5, 0.5);
   let b = vec3<f32>(0.5, 0.5, 0.5);
   let c = vec3<f32>(1.0, 1.0, 1.0);
@@ -108,187 +182,207 @@ fn palette(t : f32) -> vec3<f32> {
 }
 
 @fragment
-fn fs(in : VSOut) -> @location(0) vec4<f32> {
-  // Map screen uv to complex plane
-  let uv = vec2<f32>(in.uv.x * view.aspect, in.uv.y);
-  let c = vec2<f32>(view.centerX, view.centerY) + uv * view.scale;
+fn fs(in : VO) -> @location(0) vec4<f32> {
+  let uv = vec2<f32>(in.uv.x * P.aspect, in.uv.y);
+  let c  = P.center + uv * P.scale;
 
-  var z = vec2<f32>(0.0, 0.0);
-  var i : f32 = 0.0;
-  let maxI = view.maxIter;
-  let bail = 256.0;
+  var z  = vec2<f32>(0.0, 0.0);
+  var it : f32 = 0.0;
+  let mx : i32 = i32(P.maxIter);
 
-  loop {
-    if (i >= maxI) { break; }
-    let x = z.x * z.x - z.y * z.y + c.x;
-    let y = 2.0 * z.x * z.y + c.y;
-    z = vec2<f32>(x, y);
-    if (dot(z, z) > bail) { break; }
-    i = i + 1.0;
+  for (var k : i32 = 0; k < mx; k = k + 1) {
+    let zx = z.x * z.x - z.y * z.y + c.x;
+    let zy = 2.0  * z.x * z.y       + c.y;
+    z = vec2<f32>(zx, zy);
+    if (z.x * z.x + z.y * z.y > 256.0) { break; }
+    it = it + 1.0;
   }
 
-  if (i >= maxI) {
+  if (it >= P.maxIter) {
     return vec4<f32>(0.02, 0.0, 0.05, 1.0);
   }
 
-  // Smooth iteration count
-  let logZn = 0.5 * log(dot(z, z));
-  let nu = log(logZn / log(2.0)) / log(2.0);
-  let smooth = i + 1.0 - nu;
-  let t = fract(smooth * 0.035 + view.time * 0.02);
-  let col = palette(t);
-  return vec4<f32>(col, 1.0);
+  let mag2 = z.x * z.x + z.y * z.y + 1e-8;
+  let nu   = log(0.5 * log(mag2) / 0.6931472) / 0.6931472;
+  let smooth = it + 1.0 - nu;
+  let t = fract(smooth * 0.035 + P.time * 0.02);
+  return vec4<f32>(palette(t), 1.0);
 }
 `;
-
-const module = device.createShaderModule({ code: shader });
-
-const pipeline = device.createRenderPipeline({
-  layout: 'auto',
-  vertex: { module, entryPoint: 'vs' },
-  fragment: { module, entryPoint: 'fs', targets: [{ format }] },
-  primitive: { topology: 'triangle-list' },
-});
-
-// Uniform buffer: 8 floats = 32 bytes
-const uniformBuf = device.createBuffer({
-  size: 32,
-  usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-});
-
-const bindGroup = device.createBindGroup({
-  layout: pipeline.getBindGroupLayout(0),
-  entries: [{ binding: 0, resource: { buffer: uniformBuf } }],
-});
-
-// --- View state ---
-const HOME = { cx: -0.5, cy: 0.0, scale: 1.5 };
-let view = { cx: HOME.cx, cy: HOME.cy, scale: HOME.scale };
-let anim = null; // { phase: 'in'|'hold'|'out', t0, targetCx, targetCy, targetScale }
-
-function resize() {
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  const w = Math.max(1, Math.floor(canvas.clientWidth * dpr));
-  const h = Math.max(1, Math.floor(canvas.clientHeight * dpr));
-  if (canvas.width !== w || canvas.height !== h) {
-    canvas.width = w;
-    canvas.height = h;
+  const module = device.createShaderModule({ code });
+  // Surface any compilation errors clearly
+  const info = await module.getCompilationInfo();
+  const errs = info.messages.filter(m => m.type === 'error');
+  if (errs.length) {
+    console.error('WGSL errors:', errs);
+    return null;
   }
-}
-window.addEventListener('resize', resize);
-resize();
 
-function easeInOutCubic(t) {
-  return t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t + 2, 3) / 2;
-}
+  const pipeline = device.createRenderPipeline({
+    layout: 'auto',
+    vertex:   { module, entryPoint: 'vs' },
+    fragment: { module, entryPoint: 'fs', targets: [{ format }] },
+    primitive: { topology: 'triangle-list' },
+  });
 
-function screenToComplex(clientX, clientY) {
-  const rect = canvas.getBoundingClientRect();
-  const u = ((clientX - rect.left) / rect.width) * 2 - 1;
-  const v = 1 - ((clientY - rect.top) / rect.height) * 2; // flip y
-  const aspect = canvas.width / canvas.height;
+  const uniformBuf = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+  const bindGroup = device.createBindGroup({
+    layout: pipeline.getBindGroupLayout(0),
+    entries: [{ binding: 0, resource: { buffer: uniformBuf } }],
+  });
+
   return {
-    x: view.cx + u * aspect * view.scale,
-    y: view.cy + v * view.scale,
+    name: 'WebGPU',
+    render(now, maxIter, aspect) {
+      const data = new Float32Array([
+        view.cx, view.cy,               // center
+        view.scale, aspect,             // scale, aspect
+        maxIter, now * 0.001,           // maxIter, time
+        0, 0,                            // pad
+      ]);
+      device.queue.writeBuffer(uniformBuf, 0, data);
+      const encoder = device.createCommandEncoder();
+      const pass = encoder.beginRenderPass({
+        colorAttachments: [{
+          view: context.getCurrentTexture().createView(),
+          clearValue: { r: 0.04, g: 0.01, b: 0.08, a: 1 },
+          loadOp: 'clear', storeOp: 'store',
+        }],
+      });
+      pass.setPipeline(pipeline);
+      pass.setBindGroup(0, bindGroup);
+      pass.draw(3, 1, 0, 0);
+      pass.end();
+      device.queue.submit([encoder.finish()]);
+    },
   };
 }
 
-canvas.addEventListener('click', (e) => {
-  if (anim) return; // busy diving
-  const target = screenToComplex(e.clientX, e.clientY);
-  anim = {
-    phase: 'in',
-    t0: performance.now(),
-    duration: 2200,
-    startCx: view.cx,
-    startCy: view.cy,
-    startScale: view.scale,
-    targetCx: target.x,
-    targetCy: target.y,
-    targetScale: 0.0006, // ~2500x zoom from home
-  };
-});
+// ---------- WebGL2 renderer (fallback) ----------
+function createWebGL2Renderer() {
+  const gl = canvas.getContext('webgl2', { antialias: false, preserveDrawingBuffer: false });
+  if (!gl) return null;
 
-const HOLD_MS = 600;
+  const vsSrc = `#version 300 es
+  void main() {
+    vec2 p = vec2(-1.0);
+    if (gl_VertexID == 1) p = vec2( 3.0, -1.0);
+    if (gl_VertexID == 2) p = vec2(-1.0,  3.0);
+    gl_Position = vec4(p, 0.0, 1.0);
+  }`;
 
-function stepAnim(now) {
-  if (!anim) return;
-  const t = Math.min(1, (now - anim.t0) / anim.duration);
-  const e = easeInOutCubic(t);
+  const fsSrc = `#version 300 es
+  precision highp float;
+  uniform vec2  uCenter;
+  uniform float uScale;
+  uniform float uAspect;
+  uniform float uMaxIter;
+  uniform float uTime;
+  uniform vec2  uResolution;
+  out vec4 outColor;
 
-  if (anim.phase === 'in') {
-    view.cx = anim.startCx + (anim.targetCx - anim.startCx) * e;
-    view.cy = anim.startCy + (anim.targetCy - anim.startCy) * e;
-    // Exponential interpolation on scale for a smooth zoom feel
-    const logStart = Math.log(anim.startScale);
-    const logEnd = Math.log(anim.targetScale);
-    view.scale = Math.exp(logStart + (logEnd - logStart) * e);
-    if (t >= 1) {
-      anim = {
-        phase: 'hold',
-        t0: now,
-        duration: HOLD_MS,
-        startCx: view.cx, startCy: view.cy, startScale: view.scale,
-        targetCx: HOME.cx, targetCy: HOME.cy, targetScale: HOME.scale,
-      };
-    }
-  } else if (anim.phase === 'hold') {
-    if (t >= 1) {
-      anim = {
-        phase: 'out',
-        t0: now,
-        duration: 1800,
-        startCx: view.cx, startCy: view.cy, startScale: view.scale,
-        targetCx: HOME.cx, targetCy: HOME.cy, targetScale: HOME.scale,
-      };
-    }
-  } else if (anim.phase === 'out') {
-    view.cx = anim.startCx + (anim.targetCx - anim.startCx) * e;
-    view.cy = anim.startCy + (anim.targetCy - anim.startCy) * e;
-    const logStart = Math.log(anim.startScale);
-    const logEnd = Math.log(anim.targetScale);
-    view.scale = Math.exp(logStart + (logEnd - logStart) * e);
-    if (t >= 1) {
-      view = { cx: HOME.cx, cy: HOME.cy, scale: HOME.scale };
-      anim = null;
-    }
+  vec3 palette(float t) {
+    vec3 a = vec3(0.5);
+    vec3 b = vec3(0.5);
+    vec3 c = vec3(1.0);
+    vec3 d = vec3(0.00, 0.33, 0.67);
+    return a + b * cos(6.28318 * (c * t + d));
   }
+
+  void main() {
+    vec2 ndc = (gl_FragCoord.xy / uResolution) * 2.0 - 1.0;
+    vec2 uv  = vec2(ndc.x * uAspect, ndc.y);
+    vec2 cc  = uCenter + uv * uScale;
+
+    vec2 z = vec2(0.0);
+    float it = 0.0;
+    int mx = int(uMaxIter);
+    for (int k = 0; k < 2000; k++) {
+      if (k >= mx) break;
+      float zx = z.x*z.x - z.y*z.y + cc.x;
+      float zy = 2.0*z.x*z.y + cc.y;
+      z = vec2(zx, zy);
+      if (dot(z, z) > 256.0) break;
+      it += 1.0;
+    }
+    if (it >= uMaxIter) { outColor = vec4(0.02, 0.0, 0.05, 1.0); return; }
+    float mag2 = dot(z, z) + 1e-8;
+    float nu = log(0.5 * log(mag2) / 0.6931472) / 0.6931472;
+    float sm = it + 1.0 - nu;
+    float t = fract(sm * 0.035 + uTime * 0.02);
+    outColor = vec4(palette(t), 1.0);
+  }`;
+
+  function compile(type, src) {
+    const sh = gl.createShader(type);
+    gl.shaderSource(sh, src); gl.compileShader(sh);
+    if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
+      console.error('GLSL compile:', gl.getShaderInfoLog(sh));
+      return null;
+    }
+    return sh;
+  }
+  const vs = compile(gl.VERTEX_SHADER, vsSrc);
+  const fs = compile(gl.FRAGMENT_SHADER, fsSrc);
+  if (!vs || !fs) return null;
+  const prog = gl.createProgram();
+  gl.attachShader(prog, vs); gl.attachShader(prog, fs); gl.linkProgram(prog);
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+    console.error('link:', gl.getProgramInfoLog(prog));
+    return null;
+  }
+  const uCenter   = gl.getUniformLocation(prog, 'uCenter');
+  const uScale    = gl.getUniformLocation(prog, 'uScale');
+  const uAspect   = gl.getUniformLocation(prog, 'uAspect');
+  const uMaxIter  = gl.getUniformLocation(prog, 'uMaxIter');
+  const uTime     = gl.getUniformLocation(prog, 'uTime');
+  const uRes      = gl.getUniformLocation(prog, 'uResolution');
+  const vao = gl.createVertexArray();
+
+  return {
+    name: 'WebGL2',
+    render(now, maxIter, aspect) {
+      gl.viewport(0, 0, canvas.width, canvas.height);
+      gl.clearColor(0.04, 0.01, 0.08, 1);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      gl.useProgram(prog);
+      gl.uniform2f(uCenter, view.cx, view.cy);
+      gl.uniform1f(uScale, view.scale);
+      gl.uniform1f(uAspect, aspect);
+      gl.uniform1f(uMaxIter, maxIter);
+      gl.uniform1f(uTime, now * 0.001);
+      gl.uniform2f(uRes, canvas.width, canvas.height);
+      gl.bindVertexArray(vao);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+    },
+  };
 }
 
-function render(now) {
-  stepAnim(now);
+// ---------- Boot ----------
+let renderer = null;
+let webgpuGrabbedContext = false;
+try {
+  renderer = await createWebGPURenderer(() => { webgpuGrabbedContext = true; });
+} catch (e) {
+  console.warn('WebGPU init failed:', e);
+}
+if (!renderer) {
+  if (webgpuGrabbedContext) resetCanvas(); // free the canvas for WebGL2
+  renderer = createWebGL2Renderer();
+}
+if (!renderer) fail("No WebGPU or WebGL2 available. Try a current Chrome/Edge/Firefox/Safari.");
+engineLabel.textContent = renderer.name;
 
+function frame(now) {
+  stepAnim(now);
   const aspect = canvas.width / canvas.height;
-  // More iterations when deeper in
   const zoomFactor = HOME.scale / view.scale;
   const maxIter = Math.min(1200, Math.floor(120 + Math.log2(Math.max(1, zoomFactor)) * 80));
-
-  const data = new Float32Array([
-    view.cx, view.cy, view.scale, aspect,
-    maxIter, now * 0.001, 0, 0,
-  ]);
-  device.queue.writeBuffer(uniformBuf, 0, data);
-
-  zoomLabel.textContent = (zoomFactor).toFixed(1) + '×';
-
-  const encoder = device.createCommandEncoder();
-  const pass = encoder.beginRenderPass({
-    colorAttachments: [{
-      view: context.getCurrentTexture().createView(),
-      clearValue: { r: 0, g: 0, b: 0, a: 1 },
-      loadOp: 'clear',
-      storeOp: 'store',
-    }],
-  });
-  pass.setPipeline(pipeline);
-  pass.setBindGroup(0, bindGroup);
-  pass.draw(3, 1, 0, 0);
-  pass.end();
-  device.queue.submit([encoder.finish()]);
-
-  requestAnimationFrame(render);
+  zoomLabel.textContent = zoomFactor.toFixed(1) + '×';
+  renderer.render(now, maxIter, aspect);
+  requestAnimationFrame(frame);
 }
-requestAnimationFrame(render);
+requestAnimationFrame(frame);
 </script>
 </body>
 </html>
